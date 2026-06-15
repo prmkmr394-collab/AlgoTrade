@@ -1,0 +1,11 @@
+For tomorrow morning before 9:15 AM
+
+Plug in laptop, set sleep to "Never"
+Open new Command Prompt
+cd C:\Users\Suresh.Kumar\NiftyAlgoBot
+.venv\Scripts\activate
+python -m utils.auth (fresh token)
+Start dashboard in Terminal 1: python -m dashboard.app
+Start bot in Terminal 2: python -m main
+
+python -m run_backtest --kite --days 90

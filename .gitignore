@@ -1,0 +1,26 @@
+# Secrets — NEVER commit
+config/config.yaml
+data/access_token.txt
+data/token_date.txt
+data/bot_state.json
+*.env
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Kill switch artifacts (generated, not source)
+STOP.txt
+HALTED.txt
