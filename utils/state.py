@@ -23,6 +23,8 @@ _default_state = {
         "wins": 0,
         "losses": 0,
         "realized_pnl": 0.0,
+        "total_brokerage": 0.0,
+        "net_pnl": 0.0,
     },
     "open_position": None,                  # dict with strike/qty/entry/sl/target/current_pnl
     "last_signal": None,                    # dict with type/time/price/vwap
@@ -30,8 +32,6 @@ _default_state = {
     "errors": [],                           # last 20 errors
     "kite_connected": False,
     "ws_connected": False,
-    "indicator": {},                        # {bias, ha_close, vwap, distance_pct} — for dashboard
-    "risk_gates": {},                       # {gate_name: True/False/'na'} — for dashboard
 }
 
 
@@ -47,33 +47,28 @@ def _load() -> dict:
 
 
 def _save(state: dict):
+    """
+    Write state to disk atomically.
+    On Windows, bot_state.json may be briefly locked by the dashboard process.
+    Retry up to 10 times with a short sleep before giving up.
+    """
+    import time as _time
     STATE_FILE.parent.mkdir(exist_ok=True)
     tmp = STATE_FILE.with_suffix(".tmp")
-    # Write to temp file first
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, default=str)
-    except Exception:
-        return  # If we can't even write temp, skip this save silently
-
-    # Try to rename, with retries on Windows lock errors
-    import time as _time
-    for attempt in range(5):
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, default=str)
+    for attempt in range(10):
         try:
             tmp.replace(STATE_FILE)
             return
-        except (PermissionError, OSError):
-            _time.sleep(0.1 * (attempt + 1))
-    # Final fallback: try direct write (no atomic rename)
+        except PermissionError:
+            _time.sleep(0.05)   # 50ms — dashboard read is very brief
+    # Last resort: direct write without atomic rename
     try:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, default=str)
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
-    except Exception:
-        pass  # Give up gracefully — losing one state save isn't fatal
+    except Exception as e:
+        pass   # Never crash the bot over a dashboard write failure
 
 
 def get_state() -> dict:
@@ -100,34 +95,9 @@ def update_today(**kwargs):
 
 
 def set_open_position(position: Optional[dict]):
-    """Set or clear the open position. Pass None to clear."""
     with _lock:
         state = _load()
         state["open_position"] = position
-        state["last_heartbeat"] = datetime.now().isoformat()
-        _save(state)
-
-
-def set_indicator(bias: str = "NEUTRAL", ha_close: Optional[float] = None,
-                  vwap: Optional[float] = None, distance_pct: Optional[float] = None):
-    """Update the HA vs VWAP indicator data shown on the dashboard."""
-    with _lock:
-        state = _load()
-        state["indicator"] = {
-            "bias": bias,
-            "ha_close": ha_close,
-            "vwap": vwap,
-            "distance_pct": distance_pct,
-        }
-        state["last_heartbeat"] = datetime.now().isoformat()
-        _save(state)
-
-
-def set_risk_gates(gates: dict):
-    """Update the 9 risk-gate statuses for the dashboard."""
-    with _lock:
-        state = _load()
-        state["risk_gates"] = gates
         state["last_heartbeat"] = datetime.now().isoformat()
         _save(state)
 
@@ -142,6 +112,11 @@ def add_completed_trade(trade: dict):
         else:
             state["today"]["losses"] += 1
         state["today"]["realized_pnl"] += trade.get("pnl", 0)
+        brok = trade.get("brokerage", 0.0)
+        state["today"]["total_brokerage"] = round(
+            state["today"].get("total_brokerage", 0.0) + brok, 2)
+        state["today"]["net_pnl"] = round(
+            state["today"]["realized_pnl"] - state["today"]["total_brokerage"], 2)
         state["last_heartbeat"] = datetime.now().isoformat()
         _save(state)
 
@@ -158,26 +133,34 @@ def add_error(error_msg: str):
 
 
 def reset_for_new_day():
-    """Reset state ONLY if it's a new calendar day. Otherwise preserve existing state."""
+    """
+    Reset state for a new trading day.
+    If bot is restarted on the SAME calendar day (mid-session restart for a bug fix),
+    preserve existing trade history, P&L, and brokerage.
+    Only wipe state when it is actually a new calendar date.
+    """
     with _lock:
         existing = _load()
+
         existing_date = None
         if existing.get("started_at"):
             try:
-                existing_date = datetime.fromisoformat(existing["started_at"]).date()
+                existing_date = datetime.fromisoformat(
+                    existing["started_at"]).date()
             except Exception:
                 existing_date = None
 
         today = datetime.now().date()
 
         if existing_date == today:
-            # Same day restart — preserve trade history, just update status + heartbeat
+            # Same-day restart — preserve everything, just mark as running
             existing["status"] = "running"
+            existing["halt_reason"] = None
             existing["last_heartbeat"] = datetime.now().isoformat()
             _save(existing)
             return
 
-        # New day — fresh state
+        # New calendar day — full reset
         fresh = dict(_default_state)
         fresh["started_at"] = datetime.now().isoformat()
         fresh["last_heartbeat"] = datetime.now().isoformat()

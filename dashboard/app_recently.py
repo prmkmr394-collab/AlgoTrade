@@ -95,7 +95,11 @@ body{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;background:#0b0f14;c
 
 <div class="header">
   <div class="header-left">
-    <div style="font-size:22px;font-weight:600;letter-spacing:1px;color:#e6edf3;font-family:serif">श्रय</div>
+    <div class="avatar">SK</div>
+    <div>
+      <div class="trader-name">Suresh Kumar</div>
+      <div class="trader-sub">KL3080 &middot; Zerodha Kite &middot; <span id="hdr-mode">--</span></div>
+    </div>
   </div>
   <div class="header-right">
     <span id="mode-badge" class="badge badge-live"><span class="pulse" id="mode-pulse"></span><span id="mode-label">LIVE</span></span>
@@ -115,6 +119,11 @@ body{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;background:#0b0f14;c
     <div class="kpi-label"><i class="ti ti-trophy" style="font-size:12px"></i>Win rate</div>
     <div class="kpi-value" id="wr-val">--</div>
     <div class="kpi-sub" id="wr-sub">--</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label"><i class="ti ti-receipt" style="font-size:12px"></i>Brokerage</div>
+    <div class="kpi-value red" id="brok-val">--</div>
+    <div class="kpi-sub" id="net-pnl-sub">Net P&L: --</div>
   </div>
   <div class="kpi">
     <div class="kpi-label"><i class="ti ti-activity" style="font-size:12px"></i>Market</div>
@@ -289,7 +298,7 @@ let prevPnl = null;
 function update(s) {
   document.getElementById('last-upd').textContent = new Date().toLocaleTimeString('en-IN');
   const mode = (s.mode || 'paper').toUpperCase();
-  // hdr-mode removed
+  document.getElementById('hdr-mode').textContent = mode;
   document.getElementById('mode-label').textContent = mode;
   const mb = document.getElementById('mode-badge');
   mb.className = 'badge ' + (mode === 'LIVE' ? 'badge-live' : 'badge-paper');
@@ -307,25 +316,23 @@ function update(s) {
   const cap = parseFloat(s.loss_cap || 5900);
   const hardCap = parseFloat(s.hard_cap || 2500);
 
-  const brokTotal = parseFloat(today.total_brokerage || 0);
-  const netPnl = typeof today.net_pnl !== 'undefined' ? parseFloat(today.net_pnl) : pnl - brokTotal;
   const pnlEl = document.getElementById('pnl-val');
-  if (prevPnl !== null && netPnl !== prevPnl) { pnlEl.classList.add('pnl-flash'); setTimeout(()=>pnlEl.classList.remove('pnl-flash'),500); }
-  prevPnl = netPnl;
-  pnlEl.textContent = fmtSgn(netPnl);
-  pnlEl.className = 'kpi-value ' + (netPnl >= 0 ? 'green' : 'red');
-  document.getElementById('pnl-sub').textContent = 'Gross '+fmtSgn(pnl)+' · '+tc2+' trades';
+  if (prevPnl !== null && pnl !== prevPnl) { pnlEl.classList.add('pnl-flash'); setTimeout(()=>pnlEl.classList.remove('pnl-flash'),500); }
+  prevPnl = pnl;
+  pnlEl.textContent = fmtSgn(pnl);
+  pnlEl.className = 'kpi-value ' + (pnl >= 0 ? 'green' : 'red');
+  document.getElementById('pnl-sub').textContent = 'Realized · '+tc2+' trades';
 
   const wr = (wins + losses) > 0 ? Math.round(wins/(wins+losses)*100) : 0;
   document.getElementById('wr-val').textContent = wr + '%';
   document.getElementById('wr-val').className = 'kpi-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'yellow' : 'red');
   document.getElementById('wr-sub').textContent = wins+'W · '+losses+'L today';
 
-  // Brokerage KPI
-  if (document.getElementById('brok-val')) {
-    document.getElementById('brok-val').textContent = brokTotal > 0 ? '-'+fmt(brokTotal) : '₹0.00';
-    document.getElementById('net-pnl-sub').textContent = tc2+' trades today';
-  }
+  const brok = parseFloat(today.total_brokerage || 0);
+  const netPnl = parseFloat(today.net_pnl || pnl - brok);
+  document.getElementById('brok-val').textContent = '-' + fmt(brok);
+  document.getElementById('net-pnl-sub').textContent = 'Net P&L: ' + (netPnl >= 0 ? '+' : '') + fmt(netPnl);
+  document.getElementById('net-pnl-sub').style.color = netPnl >= 0 ? '#3fb950' : '#f85149';
 
   const drawdown = Math.abs(Math.min(0, pnl));
   const riskPct = pct(Math.abs(pnl), cap);
@@ -385,7 +392,7 @@ function update(s) {
     const curPnl = parseFloat(pos.pnl || 0);
     const tick = eqData.labels.length;
     const now = new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
-    if (!eqData.labels.includes(now)) { eqData.labels.push(now); eqData.values.push(netPnl + curPnl); if (eqChart) eqChart.update(); }
+    if (!eqData.labels.includes(now)) { eqData.labels.push(now); eqData.values.push(pnl + curPnl); if (eqChart) eqChart.update(); }
   } else {
     posCard.innerHTML = '<div class="empty">No open position.</div>';
   }
@@ -396,14 +403,14 @@ function update(s) {
     const rows = [...trades].reverse().map(t => {
       const pv  = parseFloat(t.pnl || 0);
       const bv  = parseFloat(t.brokerage || 0);
-      const nv  = typeof t.net_pnl !== 'undefined' ? parseFloat(t.net_pnl) : pv - bv;
+      const nv  = parseFloat(t.net_pnl !== undefined ? t.net_pnl : pv - bv);
       return '<tr class="trade-row"><td>'+t.entry_time+'</td><td><span class="pill '+(t.side==='BUY'?'pill-buy':'pill-sell')+'">'+t.side+'</span></td><td class="pos-symbol">'+t.symbol+'</td><td>₹'+t.entry+'</td><td>₹'+t.exit+'</td><td class="'+(pv>=0?'green':'red')+'">'+(pv>=0?'+':'')+fmt(pv)+'</td><td class="red">-'+fmt(bv)+'</td><td class="'+(nv>=0?'green':'red')+'">'+(nv>=0?'+':'')+fmt(nv)+'</td><td>'+reasonPill(t.exit_reason)+'</td></tr>';
     }).join('');
     tw.innerHTML = '<table class="trade-table"><thead><tr><th>Time</th><th>Side</th><th>Symbol</th><th>Entry</th><th>Exit</th><th>Gross P&L</th><th>Brokerage</th><th>Net P&L</th><th>Reason</th></tr></thead><tbody>'+rows+'</tbody></table>';
     if (!pnlVisible) tw.classList.add('hidden-pnl');
 
     const now2 = new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
-    if (!eqData.labels.includes(now2)) { eqData.labels.push(now2); eqData.values.push(netPnl); if (eqChart) eqChart.update(); }
+    if (!eqData.labels.includes(now2)) { eqData.labels.push(now2); eqData.values.push(pnl); if (eqChart) eqChart.update(); }
   } else {
     tw.innerHTML = '<div class="empty" style="padding:14px">No trades yet today.</div>';
   }
